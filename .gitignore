@@ -131,3 +131,4 @@ core*
 *.log
 *.vscode
 *.pyc
+data/data/

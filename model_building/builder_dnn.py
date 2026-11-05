@@ -9,15 +9,15 @@ import argparse
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import descriptors
-from syba.syba import SybaClassifier
+# from syba.syba import SybaClassifier
 
 from sklearn.preprocessing import RobustScaler
 
 import optuna
 
 import sys
-sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
-from standalone_model_numpy import SCScorer
+# sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
+# from standalone_model_numpy import SCScorer
 
 def build_model(train_X, best_params, backend="torch"):
     if backend == "tensorflow":
@@ -89,19 +89,19 @@ elif conf['descriptor'] == 'features':
 elif conf['descriptor'] == 'SA_score':
     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.sa_score)
     test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.sa_score)
-elif conf['descriptor'] == 'SC_score':
-    sc_model = SCScorer()
-    sc_model.restore(os.path.join('/home/knwb390/Projects/other/scscore/', 'models', 'full_reaxys_model_1024bool', 'model.ckpt-10654.as_numpy.json.gz'))
-    train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
-    test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
+# elif conf['descriptor'] == 'SC_score':
+#     sc_model = SCScorer()
+#     sc_model.restore(os.path.join('/home/knwb390/Projects/other/scscore/', 'models', 'full_reaxys_model_1024bool', 'model.ckpt-10654.as_numpy.json.gz'))
+#     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
+#     test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
 elif conf['descriptor'] == 'QED_score':
     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.QEDScore)
     test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.QEDScore)
-elif conf['descriptor'] == 'SYBA_score':
-    syba = SybaClassifier()
-    syba.fitDefaultScore()
-    train_data['descriptor'] = train_data['smi'].swifter.apply(syba.predict)
-    test_data['descriptor'] = test_data['smi'].swifter.apply(syba.predict)
+# elif conf['descriptor'] == 'SYBA_score':
+#     syba = SybaClassifier()
+#     syba.fitDefaultScore()
+#     train_data['descriptor'] = train_data['smi'].swifter.apply(syba.predict)
+#     test_data['descriptor'] = test_data['smi'].swifter.apply(syba.predict)
 else:
     print('Descriptor not recognised')
 

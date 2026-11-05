@@ -9,16 +9,16 @@ import argparse
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import descriptors
-from syba.syba import SybaClassifier
+# from syba.syba import SybaClassifier
 
 from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
 import optuna
 
-import sys
-sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
-from standalone_model_numpy import SCScorer
+# import sys
+# sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
+# from standalone_model_numpy import SCScorer
 
 class Objective(object):
     def __init__(self, x, y, conf, backend="torch"):
@@ -170,16 +170,16 @@ elif conf['descriptor'] == 'features':
     data['descriptor'] = data['smi'].swifter.apply(descriptors.feature_fp)
 elif conf['descriptor'] == 'SA_score':
     data['descriptor'] = data['smi'].swifter.apply(descriptors.sa_score)
-elif conf['descriptor'] == 'SC_score':
-    sc_model = SCScorer()
-    sc_model.restore(os.path.join('/home/knwb390/Projects/other/scscore/', 'models', 'full_reaxys_model_1024bool', 'model.ckpt-10654.as_numpy.json.gz'))
-    data['descriptor'] = data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
+# elif conf['descriptor'] == 'SC_score':
+#     sc_model = SCScorer()
+#     sc_model.restore(os.path.join('/home/knwb390/Projects/other/scscore/', 'models', 'full_reaxys_model_1024bool', 'model.ckpt-10654.as_numpy.json.gz'))
+#     data['descriptor'] = data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
 elif conf['descriptor'] == 'QED_score':
     data['descriptor'] = data['smi'].swifter.apply(descriptors.QEDScore)
-elif conf['descriptor'] == 'SYBA_score':
-    syba = SybaClassifier()
-    syba.fitDefaultScore()
-    data['descriptor'] = data['smi'].swifter.apply(syba.predict)
+# elif conf['descriptor'] == 'SYBA_score':
+#     syba = SybaClassifier()
+#     syba.fitDefaultScore()
+#     data['descriptor'] = data['smi'].swifter.apply(syba.predict)
 else:
     print('Descriptor not recognised')
 
