@@ -8,7 +8,6 @@ import argparse
 
 import sys
 import descriptors
-from syba.syba import SybaClassifier
 
 import sklearn.ensemble
 import sklearn.model_selection
@@ -16,15 +15,9 @@ import sklearn.svm
 import sklearn.linear_model
 from sklearn.preprocessing import RobustScaler
 
-from ModifiedNB import ModifiedNB
-
 from xgboost import XGBClassifier
 
 import optuna
-
-import sys
-sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
-from standalone_model_numpy import SCScorer
 
 class Objective(object):
     def __init__(self, x, y, conf):
@@ -55,20 +48,20 @@ class Objective(object):
             classifier_obj = sklearn.ensemble.AdaBoostClassifier(n_estimators=n_estimators, learning_rate=learning_rate)
             
         elif algorithm == 'SVC':
-            c = float(trial.suggest_loguniform("C", self._conf['algorithm'][algorithm]['C']['low'], self._conf['algorithm'][algorithm]['C']['high']))
+            c = float(trial.suggest_float("C", self._conf['algorithm'][algorithm]['C']['low'], self._conf['algorithm'][algorithm]['C']['high'], log=True))
             kernel = trial.suggest_categorical('kernel', self._conf['algorithm'][algorithm]['kernel'])
-            gamma = float(trial.suggest_loguniform("gamma", self._conf['algorithm'][algorithm]['gamma']['low'], self._conf['algorithm'][algorithm]['gamma']['high']))
+            gamma = float(trial.suggest_float("gamma", self._conf['algorithm'][algorithm]['gamma']['low'], self._conf['algorithm'][algorithm]['gamma']['high'], log=True))
                     
             classifier_obj =sklearn.svm.SVC(C=c, kernel=kernel, gamma=gamma)
             
         elif algorithm == 'LogisticRegression':
-            c = float(trial.suggest_loguniform("C", self._conf['algorithm'][algorithm]['C']['low'], self._conf['algorithm'][algorithm]['C']['high']))
+            c = float(trial.suggest_float("C", self._conf['algorithm'][algorithm]['C']['low'], self._conf['algorithm'][algorithm]['C']['high'], log=True))
             solver = trial.suggest_categorical('solver', self._conf['algorithm'][algorithm]['solver'])
             
             classifier_obj = sklearn.linear_model.LogisticRegression(C=c, solver=solver)
             
         elif algorithm == 'RidgeClassifier':
-            alpha = float(trial.suggest_loguniform("alpha", self._conf['algorithm'][algorithm]['alpha']['low'], self._conf['algorithm'][algorithm]['alpha']['high']))
+            alpha = float(trial.suggest_float("alpha", self._conf['algorithm'][algorithm]['alpha']['low'], self._conf['algorithm'][algorithm]['alpha']['high'], log=True))
             solver = trial.suggest_categorical('solver', self._conf['algorithm'][algorithm]['solver'])
             
             classifier_obj = sklearn.linear_model.RidgeClassifier(alpha=alpha, solver=solver)
@@ -80,22 +73,24 @@ class Objective(object):
             classifier_obj = sklearn.ensemble.BaggingClassifier(n_estimators=n_estimators, max_samples=max_samples)
            
         elif algorithm == 'ModifiedNB':
-            alpha = float(trial.suggest_loguniform("alpha", self._conf['algorithm'][algorithm]['alpha']['low'], self._conf['algorithm'][algorithm]['alpha']['high']))
+            alpha = float(trial.suggest_float("alpha", self._conf['algorithm'][algorithm]['alpha']['low'], self._conf['algorithm'][algorithm]['alpha']['high'], log=True))
+            from ModifiedNB import ModifiedNB
+
             classifier_obj = ModifiedNB(alpha=alpha)
         
         elif algorithm == 'XGBClassifier':
             max_depth = trial.suggest_int("max_depth", self._conf['algorithm'][algorithm]['max_depth']['low'], self._conf['algorithm'][algorithm]['max_depth']['high'])
             n_estimators = trial.suggest_int("n_estimators", self._conf['algorithm'][algorithm]['n_estimators']['low'], self._conf['algorithm'][algorithm]['n_estimators']['high'])
-            learning_rate = trial.suggest_uniform("learning_rate", self._conf['algorithm'][algorithm]['learning_rate']['low'], self._conf['algorithm'][algorithm]['learning_rate']['high'])
+            learning_rate = trial.suggest_float("learning_rate", self._conf['algorithm'][algorithm]['learning_rate']['low'], self._conf['algorithm'][algorithm]['learning_rate']['high'])
             
             classifier_obj = XGBClassifier(
-                max_depth=max_depth, n_estimators=n_estimators, learning_rate=learning_rate 
+                max_depth=max_depth, n_estimators=n_estimators, learning_rate=learning_rate, random_state=0
             )
             
         else:
             print('Classifier not specified')
             
-        cv = sklearn.model_selection.StratifiedShuffleSplit(n_splits=self._conf['cross_validation'], \
+        cv = sklearn.model_selection.StratifiedShuffleSplit(n_splits=self._conf['cross_validation'], random_state=0, \
                                                             test_size=self._conf['test_size'], \
                                                             train_size=self._conf['train_size'])
         
@@ -154,7 +149,7 @@ if 'dataset' in data.columns:
     data.drop(columns='dataset', inplace=True)
 
 if conf['descriptor'] == 'ecfp_counts':
-    data['descriptor'] = data['smi'].swifter.apply(descriptors.ecfp_counts, radius=3, useFeatures=False, useCounts=True)
+    data['descriptor'] = data['smi'].map(lambda smiles: descriptors.ecfp_counts(smiles, radius=3, useFeatures=False, useCounts=True))
 elif conf['descriptor'] == 'ecfp':
     data['descriptor'] = data['smi'].swifter.apply(descriptors.ecfp, radius=3, nBits=2048)
 elif conf['descriptor'] == 'fcfp_counts':
@@ -166,12 +161,16 @@ elif conf['descriptor'] == 'features':
 elif conf['descriptor'] == 'SA_score':
     data['descriptor'] = data['smi'].swifter.apply(descriptors.sa_score)
 elif conf['descriptor'] == 'SC_score':
+    from standalone_model_numpy import SCScorer
+
     sc_model = SCScorer()
     sc_model.restore(os.path.join('/home/knwb390/Projects/other/scscore/', 'models', 'full_reaxys_model_1024bool', 'model.ckpt-10654.as_numpy.json.gz'))
     data['descriptor'] = data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
 elif conf['descriptor'] == 'QED_score':
     data['descriptor'] = data['smi'].swifter.apply(descriptors.QEDScore)
 elif conf['descriptor'] == 'SYBA_score':
+    from syba.syba import SybaClassifier
+
     syba = SybaClassifier()
     syba.fitDefaultScore()
     data['descriptor'] = data['smi'].swifter.apply(syba.predict)

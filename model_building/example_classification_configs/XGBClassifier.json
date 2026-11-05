@@ -1,12 +1,12 @@
 {
-"train_data": "<path-to-dataset>/train.csv",
-"test_data": "<path-to-dataset>/test.csv",
-"out_dir": "<path-to-output-directory>/XGBClassifier/",
+"train_data": "../data/data/uspto_chembl_classification_train.csv",
+"test_data": "../data/data/uspto_chembl_classification_test.csv",
+"out_dir": "../data/xgb_chembl_candidate/",
 "n_jobs": 6, 
 "cross_validation": 5,
 "train_size": 0.9,
 "test_size": 0.1,
-"descriptor": "fcfp_counts",
+"descriptor": "ecfp_counts",
 "n_trials": 500,
 "algorithm": {"XGBClassifier": {
     "max_depth": {

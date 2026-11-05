@@ -1,4 +1,6 @@
 import os
+import hashlib
+import platform
 import pandas as pd
 import numpy as np
 import swifter
@@ -10,7 +12,6 @@ plt.switch_backend('agg')
 
 import sys
 import descriptors
-from syba.syba import SybaClassifier
 
 import sklearn.ensemble
 import sklearn.model_selection
@@ -18,16 +19,20 @@ import sklearn.svm
 import sklearn.linear_model
 from sklearn.metrics import accuracy_score, auc, average_precision_score, balanced_accuracy_score, f1_score, matthews_corrcoef, precision_score, recall_score, roc_auc_score, confusion_matrix
 from sklearn.preprocessing import RobustScaler
-
-from ModifiedNB import ModifiedNB
+from rdkit import rdBase
 
 from xgboost import XGBClassifier
+import xgboost
 
 import optuna
 
-import sys
-sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
-from standalone_model_numpy import SCScorer
+
+def sha256_file(file_path):
+    digest = hashlib.sha256()
+    with open(file_path, 'rb') as input_file:
+        for chunk in iter(lambda: input_file.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run hyperparameter optimisation for a model specified in the configuration file and return the best parameters as well as trail history')
@@ -70,8 +75,8 @@ if 'dataset' in test_data.columns:
     test_data.drop(columns='dataset', inplace=True)
 
 if conf['descriptor'] == 'ecfp_counts':
-    train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.ecfp_counts, radius=3, useFeatures=False, useCounts=True)
-    test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.ecfp_counts, radius=3, useFeatures=False, useCounts=True)
+    train_data['descriptor'] = train_data['smi'].map(lambda smiles: descriptors.ecfp_counts(smiles, radius=3, useFeatures=False, useCounts=True))
+    test_data['descriptor'] = test_data['smi'].map(lambda smiles: descriptors.ecfp_counts(smiles, radius=3, useFeatures=False, useCounts=True))
 elif conf['descriptor'] == 'ecfp':
     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.ecfp, radius=3, nBits=2048)
     test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.ecfp, radius=3, nBits=2048)
@@ -88,6 +93,8 @@ elif conf['descriptor'] == 'SA_score':
     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.sa_score)
     test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.sa_score)
 elif conf['descriptor'] == 'SC_score':
+    from standalone_model_numpy import SCScorer
+
     sc_model = SCScorer()
     sc_model.restore(os.path.join('/home/knwb390/Projects/other/scscore/', 'models', 'full_reaxys_model_1024bool', 'model.ckpt-10654.as_numpy.json.gz'))
     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.sc_score, sc_model=sc_model)
@@ -96,6 +103,8 @@ elif conf['descriptor'] == 'QED_score':
     train_data['descriptor'] = train_data['smi'].swifter.apply(descriptors.QEDScore)
     test_data['descriptor'] = test_data['smi'].swifter.apply(descriptors.QEDScore)
 elif conf['descriptor'] == 'SYBA_score':
+    from syba.syba import SybaClassifier
+
     syba = SybaClassifier()
     syba.fitDefaultScore()
     train_data['descriptor'] = train_data['smi'].swifter.apply(syba.predict)
@@ -142,10 +151,12 @@ elif algorithm == 'BaggingClassifier':
     classifier_obj = sklearn.ensemble.BaggingClassifier(n_estimators=best_params['n_estimators'], max_samples=best_params['max_samples'])
 
 elif algorithm == 'ModifiedNB':
+    from ModifiedNB import ModifiedNB
+
     classifier_obj = ModifiedNB(alpha=best_params['alpha'])
 
 elif algorithm == 'XGBClassifier':
-    classifier_obj = XGBClassifier(max_depth=best_params['max_depth'], n_estimators=best_params['n_estimators'], learning_rate=best_params['learning_rate'])
+    classifier_obj = XGBClassifier(max_depth=best_params['max_depth'], n_estimators=best_params['n_estimators'], learning_rate=best_params['learning_rate'], random_state=0)
 
 else:
     print('Classifier not specified')
@@ -200,5 +211,22 @@ results = {
 with open(metrics_file, 'w') as outfile:
     json.dump(results, outfile)
 
-with open(model_file, 'wb') as outfile:
-    pickle.dump(classifier_obj, outfile)
+if isinstance(classifier_obj, XGBClassifier):
+    classifier_obj.save_model(os.path.join(out_dir, 'model.json'))
+    metadata = {
+        'python_version': platform.python_version(),
+        'xgboost_version': xgboost.__version__,
+        'scikit_learn_version': sklearn.__version__,
+        'rdkit_version': rdBase.rdkitVersion,
+        'descriptor': conf['descriptor'],
+        'random_state': 0,
+        'train_data_sha256': sha256_file(conf['train_data']),
+        'test_data_sha256': sha256_file(conf['test_data']),
+        'best_params': best_params,
+        'metrics': results,
+    }
+    with open(os.path.join(out_dir, 'training_metadata.json'), 'w') as metadata_file:
+        json.dump(metadata, metadata_file, indent=2)
+else:
+    with open(model_file, 'wb') as outfile:
+        pickle.dump(classifier_obj, outfile)

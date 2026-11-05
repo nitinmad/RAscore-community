@@ -1,10 +1,11 @@
 import os
 import numpy as np
 import pickle
+import xgboost
+from xgboost import XGBClassifier
 
-from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem
-from rdkit.DataStructs import cDataStructs
+from rdkit import Chem
+from rdkit.Chem import rdFingerprintGenerator
 
 
 class RAScorerXGB:
@@ -23,15 +24,30 @@ class RAScorerXGB:
         """
         Loads the model.
 
-        :param model_path: path to the XGBoost model (.pkl) file
-        :type model_path: pkl
+        :param model_path: path to an XGBoost model (.json or legacy .pkl) file
+        :type model_path: str
         """
         HERE = os.path.abspath(os.path.dirname(__file__))
-        MODEL = os.path.join(HERE, "models/XGB_chembl_ecfp_counts/model.pkl")
-        if model_path == None:
-            self.xgb_model = pickle.load(open(MODEL, "rb"))
+        model_dir = os.path.join(HERE, "models/XGB_chembl_ecfp_counts")
+        if model_path is None:
+            json_model = os.path.join(model_dir, "model.json")
+            model_path = json_model if os.path.exists(json_model) else os.path.join(model_dir, "model.pkl")
+        model_path = os.fspath(model_path)
+
+        if model_path.lower().endswith(".json"):
+            self.xgb_model = XGBClassifier()
+            self.xgb_model.load_model(model_path)
+        elif model_path.lower().endswith(".pkl"):
+            try:
+                with open(model_path, "rb") as model_file:
+                    self.xgb_model = pickle.load(model_file)
+            except Exception as error:
+                raise RuntimeError(
+                    f"Unable to load XGBoost pickle '{model_path}' with XGBoost "
+                    f"{xgboost.__version__}; use compatible package versions or a native .json model."
+                ) from error
         else:
-            self.xgb_model = pickle.load(open(model_path, "rb"))
+            raise ValueError("XGBoost model path must end in .json or .pkl")
 
     def ecfp(self, smiles):
         """
@@ -43,13 +59,8 @@ class RAScorerXGB:
         :rtype: np.array
         """
         mol = Chem.MolFromSmiles(smiles)
-        fp = AllChem.GetMorganFingerprint(mol, 3, useCounts=True, useFeatures=False)
-        size = 2048
-        arr = np.zeros((size,), np.int32)
-        for idx, v in fp.GetNonzeroElements().items():
-            nidx = idx % size
-            arr[nidx] += int(v)
-        return arr
+        generator = rdFingerprintGenerator.GetMorganGenerator(radius=3, fpSize=2048)
+        return generator.GetCountFingerprintAsNumPy(mol).astype(np.int32, copy=False)
 
     def predict(self, smiles):
         """

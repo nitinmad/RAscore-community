@@ -7,14 +7,9 @@ import pickle
 import argparse
 
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import descriptors
 from syba.syba import SybaClassifier
-
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import binary_crossentropy
 
 from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import StratifiedKFold, train_test_split
@@ -26,50 +21,57 @@ sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
 from standalone_model_numpy import SCScorer
 
 class Objective(object):
-    def __init__(self, x, y, conf):
+    def __init__(self, x, y, conf, backend="torch"):
         # Hold this implementation specific arguments as the fields of the class.
         self._train_X, self._test_x, self._train_Y, self._test_y = train_test_split(x, y, train_size=conf['train_size'], test_size=conf['test_size'], random_state=42, shuffle=True)
         self._conf = conf
+        self._backend = backend
     
     def __call__(self, trial):
         return self._classifier(trial)
     
     def _build_model(self, trial, algorithm):
-        layers = []
-            
-        inputs = tf.keras.Input(shape=(self._train_X.shape[1],))
-        layers.append(inputs)
-        
-        x = Dense(
-            trial.suggest_categorical("layer_1", self._conf['algorithm'][algorithm]['layer_1']),
-            activation=trial.suggest_categorical("activation_1", 
-                                                self._conf['algorithm'][algorithm]['activation_1']))(layers[-1])
-        layers.append(x)
-        
-        x = Dropout(self._conf['algorithm'][algorithm]['dropout_1'])(layers[-1])
-        layers.append(x)
-                                    
+        parameters = {
+            "layer_1": trial.suggest_categorical(
+                "layer_1", self._conf['algorithm'][algorithm]['layer_1']
+            ),
+            "activation_1": trial.suggest_categorical(
+                "activation_1", self._conf['algorithm'][algorithm]['activation_1']
+            ),
+            "dropout_1": self._conf['algorithm'][algorithm]['dropout_1'],
+        }
         num_layers = trial.suggest_int("num_layers", 2, self._conf['algorithm'][algorithm]['max_layers'])
-        for l in range(2, num_layers+1):
-            x = Dense(
-            trial.suggest_categorical("units_{}".format(l), self._conf['algorithm'][algorithm]['layer_size']),
-            activation=trial.suggest_categorical("activation_{}".format(l), 
-                                                self._conf['algorithm'][algorithm]['layer_activations']))(layers[-1])
-            layers.append(x)
-            x = Dropout(round(trial.suggest_float("dropout_{}".format(l), self._conf['algorithm'][algorithm]['layer_droput']['low'], self._conf['algorithm'][algorithm]['layer_droput']['high']), 1))(layers[-1])
-            layers.append(x)
-        
-        out = Dense(1, activation='sigmoid', name = 'target')(layers[-1])
-        
-        model = Model(inputs=[inputs], outputs=[out])
-        
-        learning_rate = float(trial.suggest_loguniform("learning_rate", self._conf['algorithm'][algorithm]['learning_rate']['low'], self._conf['algorithm'][algorithm]['learning_rate']['high']))
-    
-        model.compile(loss='binary_crossentropy', 
-                        optimizer=Adam(lr=learning_rate),
-                        metrics=[tf.keras.metrics.AUC()])
-        
-        return model
+        parameters["num_layers"] = num_layers
+        for layer_index in range(2, num_layers + 1):
+            parameters[f"units_{layer_index}"] = trial.suggest_categorical(
+                f"units_{layer_index}",
+                self._conf['algorithm'][algorithm]['layer_size'],
+            )
+            parameters[f"activation_{layer_index}"] = trial.suggest_categorical(
+                f"activation_{layer_index}",
+                self._conf['algorithm'][algorithm]['layer_activations'],
+            )
+            dropout = trial.suggest_float(
+                f"dropout_{layer_index}",
+                self._conf['algorithm'][algorithm]['layer_droput']['low'],
+                self._conf['algorithm'][algorithm]['layer_droput']['high'],
+            )
+            parameters[f"dropout_{layer_index}"] = round(dropout, 1)
+
+        parameters["learning_rate"] = trial.suggest_float(
+            "learning_rate",
+            self._conf['algorithm'][algorithm]['learning_rate']['low'],
+            self._conf['algorithm'][algorithm]['learning_rate']['high'],
+            log=True,
+        )
+        if self._backend == "tensorflow":
+            from RAscore.nn_keras import build_keras_model
+
+            return build_keras_model(self._train_X.shape[1], parameters)
+
+        from RAscore.nn_torch import RAScoreNN
+
+        return RAScoreNN(self._train_X.shape[1], parameters)
     
     def _classifier(self, trial):
         algorithm = list(self._conf['algorithm'].keys())[0]
@@ -79,21 +81,34 @@ class Objective(object):
 
         model = self._build_model(trial, algorithm)
     
-        model.fit(self._train_X,
-                    self._train_Y,
-                    validation_split=self._conf['test_size'],
-                    shuffle=True,
-                    batch_size=self._conf['batch_size'],
-                    epochs=self._conf['epochs'],
-                    verbose=False
-                    )
-        
-        score = model.evaluate(self._test_x, 
-                                self._test_y, 
-                                verbose=0)
-        
-        scores.append(score[1])
-        losses.append(score[0])
+        if self._backend == "tensorflow":
+            model.fit(
+                self._train_X,
+                self._train_Y,
+                validation_split=self._conf['test_size'],
+                shuffle=True,
+                batch_size=self._conf['batch_size'],
+                epochs=self._conf['epochs'],
+                verbose=False,
+            )
+            score = model.evaluate(self._test_x, self._test_y, verbose=0)
+            scores.append(score[1])
+            losses.append(score[0])
+        else:
+            from RAscore.nn_torch import evaluate_model, train_model
+
+            train_model(
+                model,
+                self._train_X,
+                self._train_Y,
+                epochs=self._conf['epochs'],
+                batch_size=self._conf['batch_size'],
+                learning_rate=model.model_config['learning_rate'],
+                validation_split=self._conf['test_size'],
+            )
+            score = evaluate_model(model, self._test_x, self._test_y)
+            scores.append(score['auc'])
+            losses.append(score['loss'])
 
         mean_score = np.array(scores).mean()
         #print(model.metrics_names)
@@ -114,6 +129,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run hyperparameter optimisation for a model specified in the configuration file and return the best parameters as well as trail history')
     parser.add_argument('-c', '--config', type = str, default = None,
                         help = 'Specify the absolute path to the configuration file (.json)')
+    parser.add_argument('--backend', choices=('torch', 'tensorflow'), default='torch')
     args = parser.parse_args()
 
 config = args.config
@@ -178,7 +194,7 @@ if conf['descriptor'] == 'features':
     X = scaler.fit_transform(X)
 
 study = optuna.create_study(direction="maximize")
-objective = Objective(X, Y, conf)
+objective = Objective(X, Y, conf, backend=args.backend)
 study.optimize(objective, n_trials=conf['n_trials'])
 
 with open(best_params_file, 'w') as outfile:

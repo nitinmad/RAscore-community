@@ -1,14 +1,8 @@
 import os
-from zipfile import ZipFile
 import numpy as np
 
-from tensorflow import keras
-import tensorflow as tf
-
-from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem
-from rdkit.DataStructs import cDataStructs
-
+from rdkit import Chem
+from rdkit.Chem import rdFingerprintGenerator
 
 class RAScorerNN:
     """
@@ -26,14 +20,36 @@ class RAScorerNN:
         """
         Loads the model.
 
-        :param model_path: path to the neural network model (.h5) file
+        :param model_path: path to a PyTorch (.pt) or Keras (.h5) model
         """
         HERE = os.path.abspath(os.path.dirname(__file__))
-        MODEL = os.path.join(HERE, "models/DNN_chembl_fcfp_counts/model.tf")
-        if model_path == None:
-            self.nn_model = keras.models.load_model(MODEL)
-        else:
+        default_model = os.path.join(
+            HERE, "models/DNN_chembl_fcfp_counts/model.pt"
+        )
+        model_path = model_path or default_model
+        extension = os.path.splitext(model_path)[1].lower()
+        if extension == ".pt":
+            try:
+                from RAscore.nn_torch import load_checkpoint
+            except ImportError as error:
+                raise ImportError(
+                    "PyTorch is required to load NN checkpoints; install RAscore[nn]."
+                ) from error
+
+            self.nn_model = load_checkpoint(model_path)
+            self._backend = "torch"
+        elif extension in (".h5", ".hdf5") or os.path.isdir(model_path):
+            try:
+                from tensorflow import keras
+            except ImportError as error:
+                raise ImportError(
+                    "TensorFlow is required to load Keras NN models; "
+                    "install RAscore[nn-tensorflow]."
+                ) from error
             self.nn_model = keras.models.load_model(model_path)
+            self._backend = "tensorflow"
+        else:
+            raise ValueError("Neural-network model must be a .pt, .h5, or .hdf5 file")
 
     def ecfp_counts(self, smiles):
         """
@@ -45,13 +61,12 @@ class RAScorerNN:
         :rtype: np.array
         """
         mol = Chem.MolFromSmiles(smiles)
-        fp = AllChem.GetMorganFingerprint(mol, 3, useCounts=True, useFeatures=True)
-        size = 2048
-        arr = np.zeros((size,), np.int32)
-        for idx, v in fp.GetNonzeroElements().items():
-            nidx = idx % size
-            arr[nidx] += int(v)
-        return arr
+        generator = rdFingerprintGenerator.GetMorganGenerator(
+            radius=3,
+            fpSize=2048,
+            atomInvariantsGenerator=rdFingerprintGenerator.GetMorganFeatureAtomInvGen(),
+        )
+        return generator.GetCountFingerprintAsNumPy(mol).astype(np.int32, copy=False)
 
     def predict(self, smiles):
         """
@@ -69,8 +84,15 @@ class RAScorerNN:
             return float("NaN")
 
         try:
-            proba = self.nn_model.predict(arr.reshape(1, -1))
-            return proba[0][0]
+            if self._backend == "torch":
+                import torch
+
+                self.nn_model.eval()
+                with torch.no_grad():
+                    values = torch.from_numpy(arr.reshape(1, -1).astype(np.float32))
+                    return float(self.nn_model(values).item())
+            proba = self.nn_model.predict(arr.reshape(1, -1), verbose=0)
+            return float(proba[0][0])
         except:
             print("Prediction not possible")
             return float("NaN")

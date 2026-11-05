@@ -7,14 +7,9 @@ import pickle
 import argparse
 
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import descriptors
 from syba.syba import SybaClassifier
-
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import binary_crossentropy
 
 from sklearn.preprocessing import RobustScaler
 
@@ -24,43 +19,15 @@ import sys
 sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
 from standalone_model_numpy import SCScorer
 
-def build_model(train_X, best_params):
-    layers = []
+def build_model(train_X, best_params, backend="torch"):
+    if backend == "tensorflow":
+        from RAscore.nn_keras import build_keras_model
 
-    inputs = tf.keras.Input(shape=(train_X.shape[1],))
-    layers.append(inputs)
+        return build_keras_model(train_X.shape[1], best_params)
 
-    x = Dense(best_params['layer_1'], activation=best_params['activation_1'])(layers[-1])
-    layers.append(x)
+    from RAscore.nn_torch import RAScoreNN
 
-    for l in range(2, best_params['num_layers']+1):
-        x = Dense(best_params['units_{}'.format(l)], activation=best_params['activation_{}'.format(l)])(layers[-1])
-        layers.append(x)
-        x = Dropout(round(best_params["dropout_{}".format(l)], 1))(layers[-1])
-        layers.append(x)
-
-    out = Dense(1, activation='sigmoid', name = 'target')(layers[-1])
-
-    model = Model(inputs=[inputs], outputs=[out])
-            
-    learning_rate = best_params['learning_rate']
-
-    metrics=[tf.keras.metrics.AUC(),
-            tf.keras.metrics.Accuracy(),
-            tf.keras.metrics.BinaryAccuracy(),
-            tf.keras.metrics.Precision(),
-            tf.keras.metrics.Recall(),
-            tf.keras.metrics.TrueNegatives(),
-            tf.keras.metrics.TruePositives(),
-            tf.keras.metrics.FalseNegatives(),
-            tf.keras.metrics.FalsePositives()
-            ]
-
-    model.compile(loss='binary_crossentropy', 
-                  optimizer=Adam(lr=learning_rate),
-                  metrics=metrics)
-    
-    return model
+    return RAScoreNN(train_X.shape[1], best_params)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run hyperparameter optimisation for a model specified in the configuration file and return the best parameters as well as trail history')
@@ -68,6 +35,7 @@ if __name__ == '__main__':
                         help = 'Specify the absolute path to the configuration file (.json)')
     parser.add_argument('-p', '--best_params', type = str, default = None,
                         help = 'Specify the absolute path to the best parameters file (.json) from the optimisation')
+    parser.add_argument('--backend', choices=('torch', 'tensorflow'), default='torch')
     args = parser.parse_args()
 
 config = args.config
@@ -82,7 +50,8 @@ with open(best_params) as json_file:
 out_dir = conf['out_dir'] 
 viz_folder = out_dir+'viz/'
 metrics_file = out_dir+'metrics.json'
-model_file = out_dir+'model.h5'
+model_file = out_dir+'model.pt'
+keras_model_file = out_dir+'model.h5'
 
 if os.path.exists(out_dir):
        pass
@@ -156,32 +125,49 @@ algorithm = list(conf['algorithm'].keys())[0]
 
 results = {}
     
-model = build_model(train_X, best_params)
+model = build_model(train_X, best_params, args.backend)
 
-model.fit(train_X,
-            train_y,
-            validation_split=conf['test_size'],
-            shuffle=True,
-            batch_size=conf['batch_size'],
-            epochs=conf['epochs'],
-            verbose=False
-            )
-    
-score = model.evaluate(test_X, 
-                        test_y, 
-                        verbose=0)
+if args.backend == 'tensorflow':
+    model.fit(
+        train_X,
+        train_y,
+        validation_split=conf['test_size'],
+        shuffle=True,
+        batch_size=conf['batch_size'],
+        epochs=conf['epochs'],
+        verbose=False,
+    )
+    score = model.evaluate(test_X, test_y, verbose=0)
+    results = {'loss': score[0], 'auc': score[1]}
+    model.save(keras_model_file, include_optimizer=False)
+    try:
+        from RAscore.nn_torch import convert_keras_model
 
-model.save(model_file)
-    
-for metric, s in zip(model.metrics_names, score):
-    if metric in results.keys():
-        results[metric].append(s)
-    else:
-        results[metric] = []
-        results[metric].append(s)
-            
-for metric, value in results.items():
-    results[metric] = round(np.array(value).mean(),2)
+        convert_keras_model(model, train_X.shape[1], best_params, model_file)
+    except ImportError:
+        pass
+else:
+    from RAscore.nn_torch import (
+        evaluate_model,
+        export_keras_model,
+        save_checkpoint,
+        train_model,
+    )
+
+    train_model(
+        model,
+        train_X,
+        train_y,
+        epochs=conf['epochs'],
+        batch_size=conf['batch_size'],
+        learning_rate=best_params['learning_rate'],
+        validation_split=conf['test_size'],
+    )
+    results = evaluate_model(model, test_X, test_y)
+    save_checkpoint(model, model_file)
+    export_keras_model(model, keras_model_file)
+
+results = {metric: round(value, 2) for metric, value in results.items()}
 
 with open(metrics_file, 'w') as outfile:
     json.dump(str(results), outfile)

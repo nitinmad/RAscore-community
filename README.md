@@ -1,7 +1,7 @@
 # Retrosynthetic Accessibility (RA) score
  * RAscore is a score learned from the predictions of a computer aided synthesis planning tool (AiZynthfinder: https://github.com/MolecularAI/aizynthfinder). 
  * **RAscore is intended to be a binary score, indicating whether the underlying computer aided synthesis planning tool can find a route (1) or not (0) to a given compound.** 
- * The tool has been trained on 200,000 compounds from ChEMBL and so is limited to compounds within similar regions of chemical space. It is intended to predict the retrosynthetic accessibility of bioactive molecules. (Data can be found in `data.zip`)
+ * The tool has been trained on 200,000 compounds from ChEMBL and so is limited to compounds within similar regions of chemical space. It is intended to predict the retrosynthetic accessibility of bioactive molecules. (Data can be found in `data/data.zip`)
  * Attempts to use the score on more exotic compounds such as those found in the GDB databases will not work: 
     * In this case the model will need to be switched to `GDBscore`, the corresponding models can be found in the models folder or downloaded from the pre-print server.
 
@@ -16,17 +16,17 @@
 
 Follow the steps in the defined order to avoid conflicts.
 
-1. Create an environment (**note: the python version must be == 3.7, 3.8**):
+1. Create an environment for the current XGBoost runtime (Python 3.10 or newer):
 ```
-conda create --name myenv python=3.7
-conda activate myenv
+conda create --name py314_test python=3.14
+conda activate py314_test
 ```
 
-or use an existing environment with python >= 3.7
+or use an existing compatible environment.
 
-2. Install rdkit 2020.03 (if already installed skip this step)
+2. Install RDKit (if already installed skip this step)
 ```
-conda install -c rdkit rdkit -y
+conda install -c conda-forge rdkit -y
 ```
 
 3. Install RAscore 
@@ -44,23 +44,19 @@ pip install --editable .
 ```
 If the models are not automatically included check that the models.zip file exists and unzip it into the desired location.
 
-### Known Installation Issues 
-**The following versions must be used in order to use the pretrained models:**
-* python == 3.7
-* scikit-learn == 0.22.1
-* xgboost == 1.0.2
-* tensorflow-gpu == 2.5.0
+### Model Compatibility
+The bundled XGBoost `model.pkl` was created with XGBoost 1.0.2 and scikit-learn 0.22.1. Until it is replaced by a retrained native `model.json`, loading that legacy artifact requires its original compatible environment. Retrain using XGBoost 3.4.x before relying on the Python 3.14 runtime.
 
-These requirements arise becuase of the pickling method used to save the model and compatibility issues arising between different versions.
+The neural-network scorer uses PyTorch checkpoints (`.pt`) by default. Install the optional runtime with `python -m pip install -e ".[nn]"`. Keras `.h5` models and paired Keras exports can be loaded or created with `python -m pip install -e ".[nn-tensorflow]"`; TensorFlow is not needed for PyTorch inference. This checkout currently contains the legacy TensorFlow SavedModel, so generate its paired `model.pt` and `model.h5` artifacts before using the bundled NN by running `python model_building/convert_dnn.py` in an environment that can load that SavedModel.
 
 ## Usage
 ### Importing in Python
-Depending on if you would like to use the XGB based or Tensorflow based models you can import different modules. 
+The NN scorer uses PyTorch; the XGBoost scorer uses its native model format.
 
 To walk through the example in a jupyter notebook refer to `rascore_usage.ipynb`
 
 ```
-from RAscore import RAscore_NN #For tensorflow and keras based models
+from RAscore import RAscore_NN #For PyTorch NN models
 from RAscore import RAscore_XGB #For XGB based models
 
 nn_scorer = RAscore_NN.RAScorerNN() 
@@ -113,9 +109,8 @@ Options:
                             named.
 
   -o, --output_path TEXT    Output file path
-  -m, --model_path TEXT     Absolute path to the model to use, if .h5 file
-                            neural network in tensorflow/keras, if .pkl then
-                            XGBoost
+    -m, --model_path TEXT     Model path: .pt for PyTorch NN, .h5 for Keras NN,
+                                                        or .json/.pkl for XGBoost
 
   --help                    Show this message and exit.
 ```
@@ -128,13 +123,12 @@ Further RAscore models are contained in the `RAscore/models/models.zip` folder i
     * XGB_gdbchembl_ecfp_counts
 
 ## Retraining  
-If you want to retrain models, or train your own models using the hyperparameter optimisation framework found in the 'model_building' folder, then the following should be installed in the environemnt aswell:\
-`pip install -e .[retraining]`
+To retrain the XGBoost model or use the hyperparameter optimisation framework, install the retraining dependencies as well:
+`python -m pip install -e ".[retraining]"`
 
-The SYBA, SCscore and SAscore should also be downloaded for descriptor calculations and training scripts modified to reflect the locations of the models:
-* https://github.com/lich-uct/syba
-* https://github.com/connorcoley/scscore
-* https://github.com/rdkit/rdkit/tree/master/Contrib/SA_Score
+For PyTorch NN training, install `python -m pip install -e ".[retraining,nn]"`. Both NN scripts also support `--backend tensorflow`; that path requires `python -m pip install -e ".[retraining,nn-tensorflow]"` and can train without PyTorch. The TensorFlow builder writes `.h5`, and also writes `.pt` when the `nn` extra is installed.
+
+The default XGBoost `ecfp_counts` retraining workflow does not need external descriptor repositories. For optional SYBA, SCScore, or SA_Score descriptors, see the clone and setup instructions in [`model_building/README.md`](model_building/README.md#optional-external-descriptors).
 
 Please refer to the `model_building` folder for further information about retraining.
 

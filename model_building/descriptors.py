@@ -1,48 +1,40 @@
 import numpy as np
 
 from rdkit import Chem
-from rdkit.Chem import AllChem, rdMolDescriptors, MACCSkeys, QED
-from rdkit.DataStructs import cDataStructs
+from rdkit.Chem import rdFingerprintGenerator, rdMolDescriptors, QED
 
-import sys
-sys.path.insert(1, '/home/knwb390/Projects/other/')
-import SA_Score.sascorer as sascorer
-
-sys.path.insert(1, '/home/knwb390/Projects/other/scscore/scscore')
-from standalone_model_numpy import SCScorer
+def _morgan_generator(radius, fp_size, use_features=False):
+    if use_features:
+        return rdFingerprintGenerator.GetMorganGenerator(
+            radius=radius,
+            fpSize=fp_size,
+            atomInvariantsGenerator=rdFingerprintGenerator.GetMorganFeatureAtomInvGen(),
+        )
+    return rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=fp_size)
 
 def ecfp(smiles, radius=3, nBits=2048):
     mol = Chem.MolFromSmiles(smiles)
-    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits)
-    arr = np.zeros((0,), dtype=np.int32)
-    cDataStructs.ConvertToNumpyArray(fp, arr)
-    return arr
+    arr = _morgan_generator(radius, nBits).GetFingerprintAsNumPy(mol)
+    return arr.astype(np.int32, copy=False)
 
 def ecfp_counts(smiles, radius=3, useFeatures=False, useCounts=True):
     mol = Chem.MolFromSmiles(smiles)
-    fp = AllChem.GetMorganFingerprint(mol, radius, useCounts=useCounts, useFeatures=useFeatures) 
     size = 2048
-    arr = np.zeros((size,), np.int32)
-    for idx, v in fp.GetNonzeroElements().items():
-        nidx = idx % size
-        arr[nidx] += int(v)
-    return arr
+    generator = _morgan_generator(radius, size, use_features=useFeatures)
+    if useCounts:
+        arr = generator.GetCountFingerprintAsNumPy(mol)
+    else:
+        arr = generator.GetFingerprintAsNumPy(mol)
+    return arr.astype(np.int32, copy=False)
 
 def ecfp_features(smiles, radius=3, useFeatures=True, useCounts=False):
-    mol = Chem.MolFromSmiles(smiles)
-    fp = AllChem.GetMorganFingerprint(mol, radius, useCounts=useCounts, useFeatures=useFeatures) 
-    size = 2048
-    arr = np.zeros((size,), np.int32)
-    for idx, v in fp.GetNonzeroElements().items():
-        nidx = idx % size
-        arr[nidx] += int(v)
-    return arr
+    return ecfp_counts(smiles, radius=radius, useFeatures=useFeatures, useCounts=useCounts)
 
 def MACCS_keys(smiles):
     mol = Chem.MolFromSmiles(smiles)
     fp = rdMolDescriptors.GetMACCSKeysFingerprint(mol)
-    arr = np.zeros((0,), dtype=np.int32)
-    cDataStructs.ConvertToNumpyArray(fp, arr)
+    arr = np.zeros((fp.GetNumBits(),), dtype=np.int32)
+    arr[list(fp.GetOnBits())] = 1
     return arr
 
 def feature_fp(smiles):
@@ -70,6 +62,8 @@ def feature_fp(smiles):
 
 def sa_score(smi):
     try:
+        from SA_Score import sascorer
+
         mol = Chem.MolFromSmiles(smi)
         return sascorer.calculateScore(mol)
     except:

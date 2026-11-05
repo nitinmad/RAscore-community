@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--model_path",
     "-m",
-    help="Absolute path to the model to use, if .h5 file neural network in tensorflow/keras, if .pkl then XGBoost",
+    help="Model path: .pt for PyTorch NN, .h5 for Keras NN, or .json/.pkl for XGBoost",
 )
 def main(file_path: str, output_path: str, model_path: str, column_header: str) -> None:
     if file_path.endswith(".txt"):
@@ -37,18 +37,20 @@ def main(file_path: str, output_path: str, model_path: str, column_header: str) 
     else:
         ValueError("Unrecognized file type")
 
-    if not model_path or model_path.endswith(".pkl"):
+    if not model_path or model_path.lower().endswith((".pkl", ".json")):
         from RAscore import RAscore_XGB  # For XGB based models
 
         scorer = RAscore_XGB.RAScorerXGB(model_path)
 
-    elif model_path.endswith(".h5"):
-        from RAscore import RAscore_NN  # For tensorflow and keras based models
+    elif model_path.lower().endswith((".pt", ".h5", ".hdf5")):
+        from RAscore import RAscore_NN  # For PyTorch and Keras NN models
 
         scorer = RAscore_NN.RAScorerNN(model_path)
     else:
-        ValueError(
-            "Unrecognized model type, must end in .h5 for tensorflow/keras models or .pkl for xgboost"
+        raise click.BadParameter(
+            "model must end in .pt, .h5, or .hdf5 for NN models, "
+            "or .json/.pkl for XGBoost",
+            param_hint="--model_path",
         )
 
     tqdm.pandas()
